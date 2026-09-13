@@ -45,6 +45,10 @@ The simulation ends when either
 
 Timestamps are milliseconds elapsed since the start of the simulation.
 
+The two `has taken a dongle` lines of one compile usually share a timestamp.
+`try_take_pair` claims both dongles in a single critical section or neither
+(see *Deadlock*), so there is no instant at which the coder holds only one.
+
 ## Instructions
 
 ### Build
@@ -220,40 +224,41 @@ strictly by priority. Condition 1 is what keeps the hub busy while everyone
 still has room to spare.
 
 The cost in condition 2 is computed by `pass_over_cost_us`
-(`src/coder_state.c`). Being passed over on a dongle costs the head the time
-that dongle stays out of its reach, which is the passer's compile time plus the
-mandatory cooldown that follows the release:
+(`src/coder_state.c`):
 
-    cost = max(t_to_compile + t_to_debug + t_to_refactor,
-               t_to_compile + dongle_cooldown)
+    cost = t_to_compile + dongle_cooldown
 
-The first term is one full cycle of the head's own work, the second is how long
-the dongle itself is unavailable. Taking only the first term is not enough:
-`t_to_debug + t_to_refactor` is the head's idle time and has nothing to do with
-how long the dongle is gone. When `dongle_cooldown` exceeds it, a head can be
-passed over while holding less slack than the pass-over actually costs, and it
-never gets the dongle back in time. That failure was reproducible: at
-`5 1600 100 20 20 5 300 edf` -- a feasible parameter set -- one coder was
-starved through the entire run and burned out without ever compiling, in 14 of
-15 runs under both schedulers. Making the cost the maximum of the two terms
-brings that to 0 of 15 and leaves every `dongle_cooldown = 0` measurement in
-this file bit-for-bit unchanged, since the second term is then the smaller one.
+That is exactly how long the dongle stays out of the head's reach. The passer
+holds it for `t_to_compile`, releases it, and the mandatory cooldown runs before
+anyone may take it again; only then can the head have it. Nothing else in the
+simulation lengthens that gap, so nothing else belongs in the estimate.
 
-The failure was not a shortage of dongles: the same cooldown at
-`5 1300 100 20 20 5 300 edf` never starved anyone. Loosening the deadline from
-1300 to 1600 made the program worse, because a larger deadline makes condition 2
-easier to satisfy and so admits more pass-overs. A liveness failure that gets
-worse as the parameters get more generous is a flaw in the rule, not a limit of
-the resources.
+The head's own `t_to_debug + t_to_refactor` is deliberately **not** in the cost.
+While it is being passed over the head is blocked waiting for a dongle, not
+debugging and not refactoring, so those numbers describe time it is not
+spending. `dongle_cooldown` on the other hand matters a great deal: at
+`5 1600 100 20 20 5 300` the dongle is gone for 400 ms after each release, four
+times the compile time alone.
 
-The rule applies under both schedulers. Under `fifo` this means a later request
-can be served before the head of the queue when the head cannot use the dongle
-at that moment; the head keeps its place in the queue and is served as soon as
-its own blocker frees. This is a deliberate choice: strict arrival order
-combined with all-or-nothing acquisition was measured to serialise the hub to
-one compiling coder at a time, and one-at-a-time acquisition (which keeps strict
-order) burns out in 12 of 20 runs at `5 700 200 100 100 10 0 edf`, a feasible
-parameter set on which this design burns out in 0 of 20.
+**This is a deliberate deviation from the literal wording of the subject**, and
+the one place where this implementation does not follow it to the letter. The
+subject defines `fifo` as serving "the coder whose request arrived first", but
+it also requires that "no coder should be starved of dongles and burn out under
+edf scheduling, provided the parameters are feasible". On a ring those two
+demands conflict, and this implementation keeps the liveness guarantee, because
+a burnout is an observable failure while a reordered grant is not. The conflict
+is measured, not assumed: rebuilding with `can_be_passed_over` replaced by
+`return (0)` -- strict order, everything else unchanged -- at the feasible set
+`5 620 200 200 0 20 0 edf` gives **18 of 20** runs with a burnout, against
+**0 of 20** for this design. The rule applies under both schedulers; the head
+keeps its place in the queue and is served as soon as its own blocker frees.
+
+Passing over is a **starvation** mechanism, not a deadlock mechanism: the
+disabled build above starves coders into burning out, it never hangs. Deadlock
+freedom comes from the previous section, and independently from the fact that
+`(priority_key, coder_id)` is a total order -- the coder with the globally
+smallest key heads *both* of its queues at once, so a circular wait would
+require `key1 < key2 < ... < keyN < key1`.
 
 `mark_waiters_unblocked` (`src/coder_state.c`) closes the gap between the two: the
 moment a dongle is released, every coder that was waiting on it is marked as no
@@ -287,7 +292,9 @@ otherwise be reported as burnt out.
 that error is charged directly against `time_to_burnout`. `precise_sleep`
 (`src/timing.c`) instead sleeps in short slices and re-reads the clock, dropping
 to 50 µs slices for the last millisecond, so a phase ends within about a
-millisecond of its nominal length however loaded the machine is.
+millisecond of its nominal length however loaded the machine is. Each slice also
+re-tests `is_stopped`, so a phase in progress is abandoned as soon as the
+simulation ends rather than running to completion (see *Shutdown*).
 
 ### Log serialization and ordering
 
@@ -343,6 +350,14 @@ holds, and returns. `main` can then join every thread and free all memory.
 The same pair (`set_stopped` + `wake_all_dongles`) is used on the error paths in
 `run` and `spawn_coders`, so a failed `pthread_create` also unwinds cleanly
 instead of leaving threads blocked forever.
+
+A broadcast only reaches coders that are *blocked*; one sleeping through a
+phase would not see the flag until that phase ended, keeping the process alive
+for up to `time_to_compile + time_to_debug + time_to_refactor` after the burnout
+line was printed. Two checks close that window: `precise_sleep` re-tests
+`is_stopped` on every slice, and `acquire_two_dongles` tests it before doing any
+work. On `3 250 100 100 3000 5 0 fifo` this took the exit from 3438 ms down to
+279 ms, with the burnout line at 250 ms either way.
 
 ## Thread synchronization mechanisms
 
@@ -435,21 +450,33 @@ its deadline, and a coder can always terminate.
 
 ## Verification
 
-Checked on a 16-core Linux machine:
+Current results, on macOS 26.6 (arm64, Apple clang):
 
-* `valgrind --leak-check=full` — 0 bytes in use at exit and 0 errors, both for a
-  run that ends in a burnout and for one that ends by reaching the required
+* `norminette 3.3.60` — 20 of 20 files OK, 0 errors.
+* `cc -Wall -Wextra -Werror -pthread` — no warnings; `make && make` does not
+  relink.
+* `cc -fsanitize=thread` — 0 warnings across the completion path, cooldown +
+  `edf`, a single coder, and the burnout path.
+* `leaks --atExit` — 0 leaks on the completion, burnout and early-shutdown
+  paths.
+* Burnout latency: `2 200 1000 0 0 5 0 fifo` prints `burned out` at 200–201 ms
+  over five runs, `1 500 100 100 100 5 0 fifo` at 500–501 ms — inside the 10 ms
+  tolerance.
+* Log invariants, checked mechanically over 11 configurations up to 200 coders:
+  every `is compiling` is preceded by exactly two `has taken a dongle` lines for
+  that coder, timestamps never go backwards, at most one `burned out` line with
+  nothing after it, and on the completion path every coder reaches the required
   number of compiles.
-* `valgrind --tool=helgrind` — 0 errors.
-* `norminette src incl` — clean.
-* `make && make` — no relinking.
-* Burnout latency: with 200 coders and `time_to_burnout 100`, the `burned out`
-  line is printed at 100–101 ms, well inside the 10 ms tolerance.
-* Log order: with 200 coders, timestamps come out non-decreasing over repeated
-  runs.
-* Liveness: 10 consecutive runs of each of `3/4/5/6/7 800 200 200 0`,
-  `5 610 200 200 0`, `4 410 200 200 0` and `4 410 200 100 100`, under both
-  schedulers, finish without a burnout; `5 800 200 200 0 50` (50 compiles per
-  coder, about 20 s) also finishes clean.
+* Liveness: 0 burnouts over 20 runs of `5 620 200 200 0 20 0`, 15 runs of
+  `5 1600 100 20 20 5 300` and 20 runs of `5 700 200 100 100 10 0`, under both
+  schedulers.
 * Infeasible parameters still burn out on time: `1 800 …` at 800 ms,
   `5 460 200 200 0` at 460 ms, `4 310 200 100 100` at 310 ms.
+* Argument validation: negatives, non-digits, decimals, a leading `+`, the empty
+  string, values above `INT_MAX`, `0` for either count, an unknown or
+  wrong-cased scheduler, and too few or too many arguments are all rejected with
+  exit status 1.
+
+An earlier revision was also checked under `valgrind --leak-check=full` and
+`valgrind --tool=helgrind` on a 16-core Linux machine, both clean; those two
+have not been re-run since the most recent changes.

@@ -13,7 +13,7 @@
 #include "header.h"
 #include <unistd.h>
 
-void	precise_sleep(long ms)
+void	precise_sleep(t_shared *shared, long ms)
 {
 	struct timeval	start;
 	struct timeval	now;
@@ -29,7 +29,7 @@ void	precise_sleep(long ms)
 		gettimeofday(&now, NULL);
 		elapsed = (now.tv_sec - start.tv_sec) * 1000000L
 			+ (now.tv_usec - start.tv_usec);
-		if (elapsed >= target)
+		if (elapsed >= target || is_stopped(shared))
 			return ;
 		if (target - elapsed > 1000)
 			usleep(200);

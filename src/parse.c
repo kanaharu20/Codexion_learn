@@ -65,7 +65,7 @@ static int	check_ranges(char **argv, t_args *ins)
 	if (ins->num_coders < 1)
 		return (error_arg("number_of_coders", argv[1], "must be at least 1"));
 	if (ins->num_compile_req < 1)
-		return (error_arg("compiles_per_coder", argv[6],
+		return (error_arg("number_of_compiles_required", argv[6],
 				"must be at least 1"));
 	return (0);
 }
@@ -77,7 +77,8 @@ int	parse_args(char **argv, t_args *ins)
 		|| parse_one(argv[3], &ins->t_to_compile, "time_to_compile") != 0
 		|| parse_one(argv[4], &ins->t_to_debug, "time_to_debug") != 0
 		|| parse_one(argv[5], &ins->t_to_refactor, "time_to_refactor") != 0
-		|| parse_one(argv[6], &ins->num_compile_req, "compiles_per_coder") != 0
+		|| parse_one(argv[6], &ins->num_compile_req,
+			"number_of_compiles_required") != 0
 		|| parse_one(argv[7], &ins->dongle_cooldown, "dongle_cooldown") != 0)
 		return (1);
 	if (check_ranges(argv, ins) != 0)

@@ -18,11 +18,10 @@ int	error_usage(int given)
 	fprintf(stderr, "codexion: expected 8 arguments, got %d\n", given);
 	fprintf(stderr, "usage: ./codexion <number_of_coders> <time_to_burnout> "
 		"<time_to_compile>\n"
-		"       <time_to_debug> <time_to_refactor> <compiles_per_coder>\n"
-		"       <dongle_cooldown> <fifo|edf>\n"
-		"  times are in milliseconds; <number_of_coders> and "
-		"<compiles_per_coder>\n"
-		"  must be at least 1\n");
+		"       <time_to_debug> <time_to_refactor>\n"
+		"       <number_of_compiles_required> <dongle_cooldown> <fifo|edf>\n"
+		"  times are in milliseconds; <number_of_coders> and\n"
+		"  <number_of_compiles_required> must be at least 1\n");
 	return (1);
 }
 

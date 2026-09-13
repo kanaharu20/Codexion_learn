@@ -31,7 +31,9 @@ static void	do_compile_phase(t_coder *coder)
 	coder->last_compile_start_us = now;
 	pthread_mutex_unlock(&coder->state_lock);
 	log_state(coder->shared, coder->id, "is compiling");
-	precise_sleep(coder->shared->t_to_compile);
+	precise_sleep(coder->shared, coder->shared->t_to_compile);
+	if (is_stopped(coder->shared))
+		return ;
 	pthread_mutex_lock(&coder->state_lock);
 	coder->compile_count++;
 	pthread_mutex_unlock(&coder->state_lock);
@@ -40,13 +42,13 @@ static void	do_compile_phase(t_coder *coder)
 static void	do_debug_phase(t_coder *coder)
 {
 	log_state(coder->shared, coder->id, "is debugging");
-	precise_sleep(coder->shared->t_to_debug);
+	precise_sleep(coder->shared, coder->shared->t_to_debug);
 }
 
 static void	do_refactor_phase(t_coder *coder)
 {
 	log_state(coder->shared, coder->id, "is refactoring");
-	precise_sleep(coder->shared->t_to_refactor);
+	precise_sleep(coder->shared, coder->shared->t_to_refactor);
 }
 
 void	*coder_thread(void *arg)

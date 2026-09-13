@@ -76,6 +76,8 @@ int	acquire_two_dongles(t_coder *coder)
 	t_dongle	*blocker;
 	long		key;
 
+	if (is_stopped(coder->shared))
+		return (1);
 	order_by_id(coder, &first, &second);
 	key = snapshot_priority_key(coder);
 	if (second == first)

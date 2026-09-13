@@ -19,6 +19,11 @@ void	set_blocked_on(t_coder *coder, t_dongle *d)
 	pthread_mutex_unlock(&coder->state_lock);
 }
 
+static long	pass_over_cost_us(t_shared *shared)
+{
+	return ((shared->t_to_compile + shared->dongle_cooldown) * 1000L);
+}
+
 int	can_be_passed_over(t_coder *head, t_dongle *d)
 {
 	long	deadline_us;
@@ -26,8 +31,7 @@ int	can_be_passed_over(t_coder *head, t_dongle *d)
 	long	cost_us;
 	int		blocked_elsewhere;
 
-	cost_us = (head->shared->t_to_compile
-			+ head->shared->dongle_cooldown) * 1000L;
+	cost_us = pass_over_cost_us(head->shared);
 	pthread_mutex_lock(&head->state_lock);
 	blocked_elsewhere = (head->blocked_on != NULL && head->blocked_on != d);
 	deadline_us = head->last_compile_start_us

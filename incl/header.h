@@ -135,7 +135,7 @@ void					refresh_dongle_state(t_dongle *d, long cooldown_ms);
 void					wait_on_cond(t_dongle *d, t_coder *coder);
 
 /* ---- timing.c ---- */
-void					precise_sleep(long ms);
+void					precise_sleep(t_shared *shared, long ms);
 
 /* ---- coder_state.c ---- */
 void					set_blocked_on(t_coder *coder, t_dongle *d);
